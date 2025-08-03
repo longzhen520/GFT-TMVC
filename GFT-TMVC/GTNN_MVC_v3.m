@@ -1,0 +1,121 @@
+function [Z_hat,Fin] =GTNN_MVC_v3(X,opts)
+K=length(X);
+N=size(X{1},2);
+for k=1:K
+    Z{k} = zeros(N,N); %Z{2} = zeros(N,N);
+    Q2{k} = zeros(N,N);                                         
+    Q3{k} = zeros(N,N);
+    G{k} = zeros(N,N);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+    E{k} = zeros(size(X{k},1),N); %E{2} = zeros(size(X{k},1),N);
+    Q1{k} = zeros(size(X{k},1),N); %Y{2} = zeros(size(X{k},1),N);
+end
+Z_hat=zeros(N,N);
+w = zeros(N*N*K,1);
+g = zeros(N*N*K,1);
+dim1 = N;dim2 = N;dim3 = K;
+myNorm = 'tSVD_1';
+sX = [N, N, K];
+%set Default
+parOP         =    false;
+ABSTOL        =    1e-6;
+RELTOL        =    1e-4;
+miu   =opts.miu;
+gt=opts.gt;
+ cls_num = length(unique(gt));
+
+Isconverg = 0;epson = 1e-6;
+lambda =opts.lambda; %1.5 best
+gamma =opts.gamma; %1.5 best
+% beta =opts.beta; %1.5 best
+iter = 0;
+mu = 10e-5; 
+rho1 = 0.0001;
+rho2 = 0.0001;
+% rho3 = 0.0001;
+alpha=ones(K,1);
+alpha=alpha./sum(alpha);
+max_rho=1e10;
+tic;
+rng('default')
+
+while(Isconverg == 0)
+      iter = iter + 1;
+%     fprintf('----processing iter %d--------\n', iter);
+        for k=1:K
+            sum_Z{k}=0;
+         for u=1:K
+             if u==k
+                 sum_Z{k}=sum_Z{k};
+             else
+                 sum_Z{k}=sum_Z{k}+alpha(u).*Z{u};
+             end
+         end
+         end
+    for k=1:K
+        %1 update Z^k
+        tmp = X{k}'*Q1{k} + rho1*X{k}'*X{k} - rho1*X{k}'*E{k} + rho2* G{k} - Q2{k}+alpha(k).*(Z_hat-sum_Z{k});
+        Z{k}=inv((rho2+alpha(k)^2)*eye(N,N)+ rho1*X{k}'*X{k})*tmp;
+        
+        %2 update E^k
+        E{k}=solve_l1l2(X{k}-X{k}*Z{k}+Q1{k}/rho1,lambda/rho1);
+        %3 update Yk
+  
+    end
+    
+     %% update Z_hat
+    Dit=0;
+    for k = 1:K
+    Dit = Dit+alpha(k).*Z{k};
+    BB(:,k) = reshape(Z{k},[N*N 1]);
+    end
+   AA = BB'*BB; 
+
+    %% update alpha
+    
+    p = reshape(Z_hat,[N*N 1]);
+    s = 2*BB'*p;
+    alpha =SimplexQP_acc(AA, s);
+%   Z_hat=prox_nuclear(Dit,beta/rho3);     
+    Z_hat=Dit;
+    Fin=calculate_GFT_v1(Z_hat);%% R---- the number of low-frequency 
+    
+    %4 update G
+    Z_tensor = cat(3, Z{:,:});
+    W_tensor = cat(3, Q2{:,:});
+    %% 
+    G_tensor=permute(prox_tnn_glf(permute(Z_tensor + 1/rho2*W_tensor,[3,1,2]),gamma/rho2,Fin),[2,3,1]);  
+        for k=1:K
+    G{k} = G_tensor(:,:,k);
+        end
+
+          %% update Q1、Q2 、Q3  
+            for  k=1:K
+                    Q1{k} = Q1{k} + rho1*(X{k}-X{k}*Z{k}-E{k});
+                    Q2{k}=Q2{k}+rho2*(Z{k}-G{k});
+            end
+            
+    %% coverge condition
+    Isconverg = 1;
+    for k=1:K
+        if (norm(X{k}-X{k}*Z{k}-E{k},inf)>epson)
+            history.norm_Z = norm(X{k}-X{k}*Z{k}-E{k},inf);
+%             fprintf('    norm_Z %7.10f    ', history.norm_Z);
+            Isconverg = 0;
+        end
+
+        if (norm(Z{k}-G{k},inf)>epson)
+            history.norm_Z_G = norm(Z{k}-G{k},inf);
+%             fprintf('norm_Z_G %7.10f    \n', history.norm_Z_G);
+            Isconverg = 0;
+        end
+    end
+   
+    if (iter>100)
+        Isconverg  = 1;
+    end
+   
+    rho1 = min(rho1*miu, max_rho);
+    rho2 = min(rho2*miu, max_rho);
+
+end
